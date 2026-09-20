@@ -16,7 +16,7 @@ jobs:
       - name: Write project files
         run: |
           set -e
-          mkdir -p app app/src/main app/src/main/java/com/tayo/dupecleaner app/src/main/res/values
+          mkdir -p app app/src/main app/src/main/java/com/tayo/dupecleaner app/src/main/res/drawable app/src/main/res/mipmap-anydpi-v26 app/src/main/res/values
           cat > settings.gradle.kts <<'__EOF__'
           pluginManagement {
               repositories {
@@ -64,6 +64,20 @@ jobs:
                   versionName = "1.0"
               }
 
+              signingConfigs {
+                  create("fixed") {
+                      storeFile = file("fixed.jks")
+                      storePassword = "android"
+                      keyAlias = "dupe"
+                      keyPassword = "android"
+                  }
+              }
+              buildTypes {
+                  getByName("debug") {
+                      signingConfig = signingConfigs.getByName("fixed")
+                  }
+              }
+
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
                   targetCompatibility = JavaVersion.VERSION_17
@@ -103,6 +117,8 @@ jobs:
 
               <application
                   android:allowBackup="false"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher"
                   android:label="Dupe Cleaner"
                   android:theme="@style/AppTheme">
                   <activity
@@ -122,6 +138,88 @@ jobs:
           <resources>
               <style name="AppTheme" parent="android:Theme.Material.NoActionBar" />
           </resources>
+          __EOF__
+          cat > app/src/main/res/values/colors.xml <<'__EOF__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_launcher_background">#1565C0</color>
+          </resources>
+          __EOF__
+          cat > app/src/main/res/drawable/ic_launcher_foreground.xml <<'__EOF__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:fillColor="#FFB3D4FF"
+                  android:pathData="M36,26h30a4,4 0 0 1 4,4v34a4,4 0 0 1 -4,4h-30a4,4 0 0 1 -4,-4v-34a4,4 0 0 1 4,-4z" />
+              <path
+                  android:fillColor="#FFFFFFFF"
+                  android:pathData="M46,38h28a4,4 0 0 1 4,4v36a4,4 0 0 1 -4,4h-28a4,4 0 0 1 -4,-4v-36a4,4 0 0 1 4,-4z" />
+              <path
+                  android:pathData="M51,60L58,68L70,52"
+                  android:strokeColor="#FF1565C0"
+                  android:strokeWidth="5"
+                  android:strokeLineCap="round"
+                  android:strokeLineJoin="round" />
+          </vector>
+          __EOF__
+          cat > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'__EOF__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
+          __EOF__
+          cat > app/fixed.b64 <<'__EOF__'
+          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
           __EOF__
           cat > app/src/main/java/com/tayo/dupecleaner/Scanner.kt <<'__EOF__'
           package com.tayo.dupecleaner
@@ -157,6 +255,8 @@ jobs:
           data class DupGroup(val size: Long, val items: List<FileItem>)
 
           object Scanner {
+
+              const val BIN_NAME = "DupeCleaner Recycle Bin"
 
               private val docExt = setOf(
                   "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
@@ -205,7 +305,11 @@ jobs:
                   val androidDir = File(root, "Android").absolutePath
                   val out = ArrayList<FileItem>()
                   root.walkTopDown()
-                      .onEnter { dir -> !dir.name.startsWith(".") && dir.absolutePath != androidDir }
+                      .onEnter { dir ->
+                          !dir.name.startsWith(".") &&
+                              dir.name != BIN_NAME &&
+                              dir.absolutePath != androidDir
+                      }
                       .filter { it.isFile && it.extension.lowercase() in docExt && it.length() > 0L }
                       .forEach {
                           out.add(
@@ -220,6 +324,31 @@ jobs:
                           )
                       }
                   return out
+              }
+
+              // Documents have no system trash, so "recycle bin" = a folder we move them into.
+              fun moveToBin(item: FileItem): Boolean {
+                  val p = item.path ?: return false
+                  return try {
+                      val src = File(p)
+                      val bin = File(Environment.getExternalStorageDirectory(), BIN_NAME)
+                      bin.mkdirs()
+                      val base = item.name.substringBeforeLast('.', item.name)
+                      val ext = item.name.substringAfterLast('.', "")
+                      var dest = File(bin, item.name)
+                      var i = 1
+                      while (dest.exists()) {
+                          dest = File(bin, if (ext.isEmpty()) "${base}_$i" else "${base}_$i.$ext")
+                          i++
+                      }
+                      if (!src.renameTo(dest)) {
+                          src.copyTo(dest)
+                          src.delete()
+                      }
+                      true
+                  } catch (e: Exception) {
+                      false
+                  }
               }
 
               private fun openStream(cr: ContentResolver, item: FileItem): InputStream? {
@@ -362,6 +491,7 @@ jobs:
               var scanning by mutableStateOf(false)
               var progress by mutableStateOf("")
               var pending: List<FileItem> = emptyList()
+              var pendingTrash: Boolean = false
 
               val groups: List<DupGroup> get() = results[kind] ?: emptyList()
               val scanned: Boolean get() = results.containsKey(kind)
@@ -449,8 +579,9 @@ jobs:
               ) { r ->
                   if (r.resultCode == Activity.RESULT_OK) {
                       val n = vm.pending.size
+                      val msg = if (vm.pendingTrash) "Moved $n files to Recycle Bin" else "Deleted $n files"
                       vm.removeDeleted(vm.pending)
-                      Toast.makeText(ctx, "Deleted $n files", Toast.LENGTH_SHORT).show()
+                      Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
                   }
               }
 
@@ -494,16 +625,31 @@ jobs:
                   }
               }
 
-              fun doDelete() {
+              fun doDelete(permanent: Boolean) {
                   val items = selectedItems
                   if (items.isEmpty()) return
                   vm.pending = items
+                  vm.pendingTrash = !permanent
                   if (vm.kind == Kind.DOCS) {
-                      val done = items.filter { val p = it.path; p != null && File(p).delete() }
+                      val done = items.filter {
+                          if (permanent) {
+                              val p = it.path
+                              p != null && File(p).delete()
+                          } else {
+                              Scanner.moveToBin(it)
+                          }
+                      }
                       vm.removeDeleted(done)
-                      Toast.makeText(ctx, "Deleted ${done.size} files", Toast.LENGTH_SHORT).show()
+                      val msg = if (permanent) "Deleted ${done.size} files"
+                      else "Moved ${done.size} files to '${Scanner.BIN_NAME}' folder"
+                      Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
                   } else {
-                      val pi = MediaStore.createDeleteRequest(ctx.contentResolver, items.map { it.uri })
+                      val uris = items.map { it.uri }
+                      val pi = if (permanent) {
+                          MediaStore.createDeleteRequest(ctx.contentResolver, uris)
+                      } else {
+                          MediaStore.createTrashRequest(ctx.contentResolver, uris, true)
+                      }
                       deleteLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
                   }
               }
@@ -657,21 +803,27 @@ jobs:
                   val lost = groups.count { g -> g.items.all { it.key in vm.selected } }
                   AlertDialog(
                       onDismissRequest = { confirm = false },
-                      title = { Text("Delete ${selectedItems.size} files?") },
+                      title = { Text("Delete ${selectedItems.size} files permanently?") },
                       text = {
                           Text(
-                              if (lost > 0) {
-                                  "WARNING: $lost group(s) have EVERY copy ticked. Those files will be gone completely.\n\nThis cannot be undone."
+                              (if (lost > 0) {
+                                  "WARNING: $lost group(s) have EVERY copy ticked, so nothing would be left of those files.\n\n"
                               } else {
-                                  "One copy of each file is kept. This cannot be undone."
-                              }
+                                  ""
+                              }) +
+                                  "Yes = deleted forever.\nNo = moved to the Recycle Bin so you can restore them."
                           )
                       },
                       confirmButton = {
-                          TextButton(onClick = { confirm = false; doDelete() }) { Text("Delete") }
-                      },
-                      dismissButton = {
-                          TextButton(onClick = { confirm = false }) { Text("Cancel") }
+                          Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
+                              TextButton(onClick = { confirm = false; doDelete(true) }) {
+                                  Text("Yes, delete permanently")
+                              }
+                              TextButton(onClick = { confirm = false; doDelete(false) }) {
+                                  Text("No, move to Recycle Bin")
+                              }
+                              TextButton(onClick = { confirm = false }) { Text("Cancel") }
+                          }
                       }
                   )
               }
@@ -731,6 +883,7 @@ jobs:
               }
           }
           __EOF__
+          base64 -d app/fixed.b64 > app/fixed.jks
 
       - uses: actions/setup-java@v4
         with:
