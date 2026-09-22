@@ -16,7 +16,7 @@ jobs:
       - name: Write project files
         run: |
           set -e
-          mkdir -p app app/src/main app/src/main/java/com/tayo/dupecleaner app/src/main/res/values
+          mkdir -p app app/src/main app/src/main/java/com/tayo/dupecleaner app/src/main/res/drawable app/src/main/res/mipmap-anydpi-v26 app/src/main/res/values
           cat > settings.gradle.kts <<'__EOF__'
           pluginManagement {
               repositories {
@@ -60,8 +60,22 @@ jobs:
                   applicationId = "com.tayo.dupecleaner"
                   minSdk = 30
                   targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0"
+                  versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+                  versionName = "1.1"
+              }
+
+              signingConfigs {
+                  create("fixed") {
+                      storeFile = file("fixed.jks")
+                      storePassword = "android"
+                      keyAlias = "dupe"
+                      keyPassword = "android"
+                  }
+              }
+              buildTypes {
+                  getByName("debug") {
+                      signingConfig = signingConfigs.getByName("fixed")
+                  }
               }
 
               compileOptions {
@@ -103,6 +117,8 @@ jobs:
 
               <application
                   android:allowBackup="false"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher"
                   android:label="Dupe Cleaner"
                   android:theme="@style/AppTheme">
                   <activity
@@ -123,6 +139,88 @@ jobs:
               <style name="AppTheme" parent="android:Theme.Material.NoActionBar" />
           </resources>
           __EOF__
+          cat > app/src/main/res/values/colors.xml <<'__EOF__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_launcher_background">#1565C0</color>
+          </resources>
+          __EOF__
+          cat > app/src/main/res/drawable/ic_launcher_foreground.xml <<'__EOF__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:fillColor="#FFB3D4FF"
+                  android:pathData="M36,26h30a4,4 0 0 1 4,4v34a4,4 0 0 1 -4,4h-30a4,4 0 0 1 -4,-4v-34a4,4 0 0 1 4,-4z" />
+              <path
+                  android:fillColor="#FFFFFFFF"
+                  android:pathData="M46,38h28a4,4 0 0 1 4,4v36a4,4 0 0 1 -4,4h-28a4,4 0 0 1 -4,-4v-36a4,4 0 0 1 4,-4z" />
+              <path
+                  android:pathData="M51,60L58,68L70,52"
+                  android:strokeColor="#FF1565C0"
+                  android:strokeWidth="5"
+                  android:strokeLineCap="round"
+                  android:strokeLineJoin="round" />
+          </vector>
+          __EOF__
+          cat > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'__EOF__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
+          __EOF__
+          cat > app/fixed.b64 <<'__EOF__'
+          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
+          __EOF__
           cat > app/src/main/java/com/tayo/dupecleaner/Scanner.kt <<'__EOF__'
           package com.tayo.dupecleaner
 
@@ -140,8 +238,15 @@ jobs:
           enum class Kind(val label: String) {
               PHOTOS("Photos"),
               VIDEOS("Videos"),
-              DOCS("Documents")
+              DOCS("Documents"),
+              LARGE("Large files"),
+              WHATSAPP("WhatsApp")
           }
+
+          val visualExt = setOf(
+              "jpg", "jpeg", "png", "webp", "gif", "bmp", "heic",
+              "mp4", "mkv", "3gp", "mov", "avi", "webm"
+          )
 
           data class FileItem(
               val uri: Uri,
@@ -149,18 +254,41 @@ jobs:
               val name: String,
               val size: Long,
               val date: Long,
-              val kind: Kind
+              val kind: Kind,
+              val category: String = "",
+              val sent: Boolean = false
           ) {
               val key: String = uri.toString()
+              val ext: String = name.substringAfterLast('.', "").lowercase()
+              val isVisual: Boolean get() = ext in visualExt
           }
 
           data class DupGroup(val size: Long, val items: List<FileItem>)
 
           object Scanner {
 
+              const val BIN_NAME = "DupeCleaner Recycle Bin"
+
               private val docExt = setOf(
                   "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
                   "txt", "csv", "rtf", "odt", "epub"
+              )
+
+              // Places WhatsApp / WhatsApp Business keep received and sent media.
+              private val waRoots = listOf(
+                  "Android/media/com.whatsapp/WhatsApp/Media",
+                  "WhatsApp/Media",
+                  "Android/media/com.whatsapp.w4b/WhatsApp Business/Media",
+                  "WhatsApp Business/Media"
+              )
+
+              private fun fileItem(f: File, kind: Kind): FileItem = FileItem(
+                  uri = Uri.fromFile(f),
+                  path = f.absolutePath,
+                  name = f.name,
+                  size = f.length(),
+                  date = f.lastModified() / 1000,
+                  kind = kind
               )
 
               fun listMedia(cr: ContentResolver, kind: Kind): List<FileItem> {
@@ -205,7 +333,11 @@ jobs:
                   val androidDir = File(root, "Android").absolutePath
                   val out = ArrayList<FileItem>()
                   root.walkTopDown()
-                      .onEnter { dir -> !dir.name.startsWith(".") && dir.absolutePath != androidDir }
+                      .onEnter { dir ->
+                          !dir.name.startsWith(".") &&
+                              dir.name != BIN_NAME &&
+                              dir.absolutePath != androidDir
+                      }
                       .filter { it.isFile && it.extension.lowercase() in docExt && it.length() > 0L }
                       .forEach {
                           out.add(
@@ -220,6 +352,98 @@ jobs:
                           )
                       }
                   return out
+              }
+
+              // Folders the large-files scan must never enter (app data, our bin, WhatsApp chat backups).
+              private fun skipForLarge(root: File, dir: File): Boolean {
+                  val p = dir.absolutePath
+                  if (dir.name == BIN_NAME) return true
+                  if (p == File(root, "Android/data").absolutePath) return true
+                  if (p == File(root, "Android/obb").absolutePath) return true
+                  if (p.contains("/WhatsApp") && (dir.name == "Backups" || dir.name == "Databases")) return true
+                  return false
+              }
+
+              // Every file of at least minBytes, biggest first.
+              fun listLarge(minBytes: Long): List<FileItem> {
+                  val root = Environment.getExternalStorageDirectory()
+                  val out = ArrayList<FileItem>()
+                  root.walkTopDown()
+                      .onEnter { dir -> !dir.name.startsWith(".") && !skipForLarge(root, dir) }
+                      .filter { it.isFile && it.length() >= minBytes }
+                      .forEach { out.add(fileItem(it, Kind.LARGE)) }
+                  out.sortByDescending { it.size }
+                  return out
+              }
+
+              private fun waCategory(folder: String): String = when {
+                  folder.startsWith(".Statuses") -> "Statuses"
+                  folder.contains("Voice Notes") -> "Voice notes"
+                  folder.contains("Animated Gifs") -> "GIFs"
+                  folder.contains("Sticker") -> "Stickers"
+                  folder.contains("Images") -> "Images"
+                  folder.contains("Video") -> "Videos"
+                  folder.contains("Audio") -> "Audio"
+                  folder.contains("Documents") -> "Documents"
+                  else -> "Other"
+              }
+
+              // WhatsApp media only (never chat databases or backups), biggest first.
+              fun listWhatsApp(): List<FileItem> {
+                  val root = Environment.getExternalStorageDirectory()
+                  val out = ArrayList<FileItem>()
+                  for (rel in waRoots) {
+                      val media = File(root, rel)
+                      if (!media.isDirectory) continue
+                      media.walkTopDown()
+                          .filter { it.isFile && it.length() > 0L && it.name != ".nomedia" }
+                          .forEach { f ->
+                              val parts = f.relativeTo(media).path.split(File.separatorChar)
+                              out.add(
+                                  fileItem(f, Kind.WHATSAPP).copy(
+                                      category = waCategory(parts.firstOrNull() ?: ""),
+                                      sent = parts.contains("Sent")
+                                  )
+                              )
+                          }
+                  }
+                  return out.distinctBy { it.key }.sortedByDescending { it.size }
+              }
+
+              fun deletePath(item: FileItem): Boolean {
+                  val p = item.path ?: return false
+                  return try {
+                      File(p).delete()
+                  } catch (e: Exception) {
+                      false
+                  }
+              }
+
+              // Files have no system trash, so "recycle bin" = a folder we move them into.
+              fun moveToBin(item: FileItem): Boolean {
+                  val p = item.path ?: return false
+                  return try {
+                      val src = File(p)
+                      val bin = File(Environment.getExternalStorageDirectory(), BIN_NAME)
+                      bin.mkdirs()
+                      val hide = File(bin, ".nomedia")
+                      if (!hide.exists()) hide.createNewFile()
+                      val base = item.name.substringBeforeLast('.', item.name)
+                      val ext = item.name.substringAfterLast('.', "")
+                      var dest = File(bin, item.name)
+                      var i = 1
+                      while (dest.exists()) {
+                          dest = File(bin, if (ext.isEmpty()) "${base}_$i" else "${base}_$i.$ext")
+                          i++
+                      }
+                      if (!src.renameTo(dest)) {
+                          src.copyTo(dest)
+                          src.delete()
+                      }
+                      true
+                  } catch (e: Exception) {
+                      false
+                  }
               }
 
               private fun openStream(cr: ContentResolver, item: FileItem): InputStream? {
@@ -285,6 +509,7 @@ jobs:
           import android.app.Activity
           import android.content.ContentResolver
           import android.content.Intent
+          import android.media.MediaScannerConnection
           import android.net.Uri
           import android.os.Build
           import android.os.Bundle
@@ -299,32 +524,39 @@ jobs:
           import androidx.activity.result.contract.ActivityResultContracts
           import androidx.compose.foundation.background
           import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.horizontalScroll
           import androidx.compose.foundation.layout.Arrangement
           import androidx.compose.foundation.layout.Box
           import androidx.compose.foundation.layout.Column
           import androidx.compose.foundation.layout.PaddingValues
           import androidx.compose.foundation.layout.Row
+          import androidx.compose.foundation.layout.RowScope
           import androidx.compose.foundation.layout.Spacer
           import androidx.compose.foundation.layout.aspectRatio
           import androidx.compose.foundation.layout.fillMaxSize
           import androidx.compose.foundation.layout.fillMaxWidth
           import androidx.compose.foundation.layout.height
           import androidx.compose.foundation.layout.padding
+          import androidx.compose.foundation.layout.size
           import androidx.compose.foundation.layout.width
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
           import androidx.compose.foundation.lazy.grid.GridCells
           import androidx.compose.foundation.lazy.grid.GridItemSpan
           import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
           import androidx.compose.foundation.lazy.grid.items
+          import androidx.compose.foundation.rememberScrollState
           import androidx.compose.foundation.shape.RoundedCornerShape
           import androidx.compose.material3.AlertDialog
           import androidx.compose.material3.Button
           import androidx.compose.material3.Checkbox
           import androidx.compose.material3.CheckboxDefaults
           import androidx.compose.material3.CircularProgressIndicator
+          import androidx.compose.material3.ExperimentalMaterial3Api
           import androidx.compose.material3.MaterialTheme
           import androidx.compose.material3.Scaffold
+          import androidx.compose.material3.ScrollableTabRow
           import androidx.compose.material3.Tab
-          import androidx.compose.material3.TabRow
           import androidx.compose.material3.Text
           import androidx.compose.material3.TextButton
           import androidx.compose.material3.darkColorScheme
@@ -353,7 +585,13 @@ jobs:
           import kotlinx.coroutines.Dispatchers
           import kotlinx.coroutines.launch
           import kotlinx.coroutines.withContext
-          import java.io.File
+
+          // Items + ticks for the Large files and WhatsApp tabs.
+          class ListState {
+              var items by mutableStateOf<List<FileItem>>(emptyList())
+              var selected by mutableStateOf<Set<String>>(emptySet())
+              var scanned by mutableStateOf(false)
+          }
 
           class MainVM : ViewModel() {
               var kind by mutableStateOf(Kind.PHOTOS)
@@ -362,9 +600,39 @@ jobs:
               var scanning by mutableStateOf(false)
               var progress by mutableStateOf("")
               var pending: List<FileItem> = emptyList()
+              var pendingTrash: Boolean = false
+
+              val large = ListState()
+              val wa = ListState()
+              var minMb by mutableStateOf(50)
+              var waCategory by mutableStateOf("All")
+              var waSide by mutableStateOf("All")
+              var waAgeDays by mutableStateOf(0)
 
               val groups: List<DupGroup> get() = results[kind] ?: emptyList()
               val scanned: Boolean get() = results.containsKey(kind)
+
+              val largeVisible: List<FileItem>
+                  get() {
+                      val min = minMb * 1_048_576L
+                      return large.items.filter { it.size >= min }
+                  }
+
+              // WhatsApp files after the Received/Sent and age filters (before the category filter).
+              val waBase: List<FileItem>
+                  get() {
+                      val cutoff = if (waAgeDays > 0) {
+                          System.currentTimeMillis() / 1000 - waAgeDays * 86400L
+                      } else {
+                          Long.MAX_VALUE
+                      }
+                      return wa.items.filter {
+                          (waSide == "All" || (waSide == "Sent") == it.sent) && it.date <= cutoff
+                      }
+                  }
+
+              val waVisible: List<FileItem>
+                  get() = waBase.filter { waCategory == "All" || it.category == waCategory }
 
               fun scan(cr: ContentResolver) {
                   if (scanning) return
@@ -390,6 +658,28 @@ jobs:
                   }
               }
 
+              // Scan for the Large files or WhatsApp tab.
+              fun scanList(k: Kind) {
+                  if (scanning) return
+                  scanning = true
+                  progress = if (k == Kind.LARGE) "Looking for big files..." else "Reading WhatsApp media..."
+                  viewModelScope.launch {
+                      try {
+                          val found = withContext(Dispatchers.IO) {
+                              if (k == Kind.LARGE) Scanner.listLarge(20L * 1024L * 1024L) else Scanner.listWhatsApp()
+                          }
+                          val st = if (k == Kind.LARGE) large else wa
+                          st.items = found
+                          st.selected = emptySet()
+                          st.scanned = true
+                      } catch (e: Exception) {
+                          progress = "Scan failed: ${e.message}"
+                      } finally {
+                          scanning = false
+                      }
+                  }
+              }
+
               fun toggle(key: String) {
                   selected = if (key in selected) selected - key else selected + key
               }
@@ -401,6 +691,24 @@ jobs:
               fun autoSelect() {
                   val all = groups.flatMap { g -> g.items.map { it.key } }.toSet()
                   selected = (selected - all) + groups.flatMap { g -> g.items.drop(1).map { it.key } }
+              }
+
+              fun toggleIn(st: ListState, key: String) {
+                  st.selected = if (key in st.selected) st.selected - key else st.selected + key
+              }
+
+              fun selectAllIn(st: ListState, visible: List<FileItem>) {
+                  st.selected = st.selected + visible.map { it.key }
+              }
+
+              fun clearSel(st: ListState) {
+                  st.selected = emptySet()
+              }
+
+              fun removeFromList(st: ListState, gone: List<FileItem>) {
+                  val g = gone.map { it.key }.toSet()
+                  st.items = st.items.filter { it.key !in g }
+                  st.selected = st.selected - g
               }
 
               fun removeDeleted(done: List<FileItem>) {
@@ -420,6 +728,10 @@ jobs:
               else -> "${b / 1024} KB"
           }
 
+          fun dateText(seconds: Long): String =
+              java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
+                  .format(java.util.Date(seconds * 1000))
+
           class MainActivity : ComponentActivity() {
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
@@ -432,13 +744,45 @@ jobs:
               }
           }
 
+          @OptIn(ExperimentalMaterial3Api::class)
           @Composable
           fun App(vm: MainVM) {
               val ctx = LocalContext.current
+              val isDup = vm.kind == Kind.PHOTOS || vm.kind == Kind.VIDEOS || vm.kind == Kind.DOCS
               val groups = vm.groups
-              val selectedItems = groups.flatMap { it.items }.filter { it.key in vm.selected }
-              val dupFiles = groups.sumOf { it.items.size }
-              val dupBytes = groups.sumOf { it.size * it.items.size }
+              val dupSelected = groups.flatMap { it.items }.filter { it.key in vm.selected }
+              val largeVisible = vm.largeVisible
+              val waBase = vm.waBase
+              val waVisible = vm.waVisible
+
+              // What the Delete button will act on, for whichever tab is open.
+              val toDelete: List<FileItem> = when (vm.kind) {
+                  Kind.LARGE -> largeVisible.filter { it.key in vm.large.selected }
+                  Kind.WHATSAPP -> waVisible.filter { it.key in vm.wa.selected }
+                  else -> dupSelected
+              }
+              val hasList: Boolean = when (vm.kind) {
+                  Kind.LARGE -> vm.large.scanned && largeVisible.isNotEmpty()
+                  Kind.WHATSAPP -> vm.wa.scanned && waVisible.isNotEmpty()
+                  else -> vm.scanned && groups.isNotEmpty()
+              }
+              val subtitle: String? = when (vm.kind) {
+                  Kind.LARGE ->
+                      if (vm.large.scanned && largeVisible.isNotEmpty()) {
+                          "${largeVisible.size} files \u00B7 ${fmt(largeVisible.sumOf { it.size })}"
+                      } else null
+                  Kind.WHATSAPP ->
+                      if (vm.wa.scanned && waVisible.isNotEmpty()) {
+                          "${waVisible.size} files \u00B7 ${fmt(waVisible.sumOf { it.size })}"
+                      } else null
+                  else ->
+                      if (vm.scanned && groups.isNotEmpty()) {
+                          "${groups.sumOf { it.items.size }} files \u00B7 ${fmt(groups.sumOf { it.size * it.items.size })}"
+                      } else null
+              }
+              val noun = if (isDup) "Duplicates" else "Files"
+              val verb = if (isDup) "Save" else "Free"
+
               var confirm by remember { mutableStateOf(false) }
               val loader = remember {
                   ImageLoader.Builder(ctx).components { add(VideoFrameDecoder.Factory()) }.build()
@@ -449,8 +793,9 @@ jobs:
               ) { r ->
                   if (r.resultCode == Activity.RESULT_OK) {
                       val n = vm.pending.size
+                      val msg = if (vm.pendingTrash) "Moved $n files to Recycle Bin" else "Deleted $n files"
                       vm.removeDeleted(vm.pending)
-                      Toast.makeText(ctx, "Deleted $n files", Toast.LENGTH_SHORT).show()
+                      Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
                   }
               }
 
@@ -464,10 +809,19 @@ jobs:
                   }
               }
 
+              fun runScan() {
+                  if (vm.kind == Kind.LARGE || vm.kind == Kind.WHATSAPP) {
+                      vm.scanList(vm.kind)
+                  } else {
+                      vm.scan(ctx.contentResolver)
+                  }
+              }
+
               fun startScan() {
-                  if (vm.kind == Kind.DOCS) {
+                  val needsAllFiles = vm.kind == Kind.DOCS || vm.kind == Kind.LARGE || vm.kind == Kind.WHATSAPP
+                  if (needsAllFiles) {
                       if (Environment.isExternalStorageManager()) {
-                          vm.scan(ctx.contentResolver)
+                          runScan()
                       } else {
                           Toast.makeText(
                               ctx,
@@ -494,17 +848,33 @@ jobs:
                   }
               }
 
-              fun doDelete() {
-                  val items = selectedItems
+              fun doDelete(permanent: Boolean) {
+                  val items = toDelete
                   if (items.isEmpty()) return
+                  val viaMediaStore = vm.kind == Kind.PHOTOS || vm.kind == Kind.VIDEOS
                   vm.pending = items
-                  if (vm.kind == Kind.DOCS) {
-                      val done = items.filter { val p = it.path; p != null && File(p).delete() }
-                      vm.removeDeleted(done)
-                      Toast.makeText(ctx, "Deleted ${done.size} files", Toast.LENGTH_SHORT).show()
-                  } else {
-                      val pi = MediaStore.createDeleteRequest(ctx.contentResolver, items.map { it.uri })
+                  vm.pendingTrash = !permanent
+                  if (viaMediaStore) {
+                      val uris = items.map { it.uri }
+                      val pi = if (permanent) {
+                          MediaStore.createDeleteRequest(ctx.contentResolver, uris)
+                      } else {
+                          MediaStore.createTrashRequest(ctx.contentResolver, uris, true)
+                      }
                       deleteLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                  } else {
+                      val done = items.filter {
+                          if (permanent) Scanner.deletePath(it) else Scanner.moveToBin(it)
+                      }
+                      MediaScannerConnection.scanFile(ctx, done.mapNotNull { it.path }.toTypedArray(), null, null)
+                      vm.removeDeleted(done)
+                      vm.removeFromList(vm.large, done)
+                      vm.removeFromList(vm.wa, done)
+                      val failed = items.size - done.size
+                      val base = if (permanent) "Deleted ${done.size} files"
+                      else "Moved ${done.size} files to '${Scanner.BIN_NAME}' folder"
+                      val msg = if (failed > 0) "$base ($failed failed)" else base
+                      Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
                   }
               }
 
@@ -512,16 +882,12 @@ jobs:
                   topBar = {
                       Column {
                           Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                              Text("Duplicates", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                              if (vm.scanned && groups.isNotEmpty()) {
-                                  Text(
-                                      "$dupFiles files \u00B7 ${fmt(dupBytes)}",
-                                      fontSize = 13.sp,
-                                      color = Color.Gray
-                                  )
+                              Text("Dupe Cleaner", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                              if (subtitle != null) {
+                                  Text(subtitle, fontSize = 13.sp, color = Color.Gray)
                               }
                           }
-                          TabRow(selectedTabIndex = vm.kind.ordinal) {
+                          ScrollableTabRow(selectedTabIndex = vm.kind.ordinal, edgePadding = 8.dp) {
                               Kind.values().forEach { k ->
                                   Tab(
                                       selected = vm.kind == k,
@@ -533,10 +899,10 @@ jobs:
                       }
                   },
                   bottomBar = {
-                      if (vm.scanned && groups.isNotEmpty() && !vm.scanning) {
+                      if (hasList && !vm.scanning) {
                           Button(
                               onClick = { confirm = true },
-                              enabled = selectedItems.isNotEmpty(),
+                              enabled = toDelete.isNotEmpty(),
                               modifier = Modifier
                                   .fillMaxWidth()
                                   .padding(12.dp)
@@ -544,11 +910,11 @@ jobs:
                           ) {
                               Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                   Text(
-                                      "Delete ${selectedItems.size} Duplicates",
+                                      "Delete ${toDelete.size} $noun",
                                       fontSize = 17.sp,
                                       fontWeight = FontWeight.Bold
                                   )
-                                  Text("(Save ${fmt(selectedItems.sumOf { it.size })})", fontSize = 13.sp)
+                                  Text("($verb ${fmt(toDelete.sumOf { it.size })})", fontSize = 13.sp)
                               }
                           }
                       }
@@ -565,6 +931,12 @@ jobs:
                               Spacer(Modifier.height(16.dp))
                               Text(vm.progress)
                           }
+
+                          vm.kind == Kind.LARGE ->
+                              LargeView(vm, largeVisible, loader) { startScan() }
+
+                          vm.kind == Kind.WHATSAPP ->
+                              WhatsAppView(vm, waBase, waVisible, loader) { startScan() }
 
                           !vm.scanned -> Column(
                               Modifier.fillMaxSize().padding(24.dp),
@@ -654,26 +1026,262 @@ jobs:
               }
 
               if (confirm) {
-                  val lost = groups.count { g -> g.items.all { it.key in vm.selected } }
+                  val lost = if (isDup) groups.count { g -> g.items.all { it.key in vm.selected } } else 0
+                  val lostNote = if (lost > 0) {
+                      "WARNING: $lost group(s) have EVERY copy ticked, so nothing would be left of those files.\n\n"
+                  } else {
+                      ""
+                  }
+                  val waNote = if (vm.kind == Kind.WHATSAPP) {
+                      "Deleted WhatsApp media will show as missing inside your chats.\n\n"
+                  } else {
+                      ""
+                  }
                   AlertDialog(
                       onDismissRequest = { confirm = false },
-                      title = { Text("Delete ${selectedItems.size} files?") },
+                      title = { Text("Delete ${toDelete.size} files permanently?") },
                       text = {
                           Text(
-                              if (lost > 0) {
-                                  "WARNING: $lost group(s) have EVERY copy ticked. Those files will be gone completely.\n\nThis cannot be undone."
-                              } else {
-                                  "One copy of each file is kept. This cannot be undone."
-                              }
+                              lostNote + waNote +
+                                  "Yes = deleted forever.\nNo = moved to the Recycle Bin so you can restore them."
                           )
                       },
                       confirmButton = {
-                          TextButton(onClick = { confirm = false; doDelete() }) { Text("Delete") }
-                      },
-                      dismissButton = {
-                          TextButton(onClick = { confirm = false }) { Text("Cancel") }
+                          Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
+                              TextButton(onClick = { confirm = false; doDelete(true) }) {
+                                  Text("Yes, delete permanently")
+                              }
+                              TextButton(onClick = { confirm = false; doDelete(false) }) {
+                                  Text("No, move to Recycle Bin")
+                              }
+                              TextButton(onClick = { confirm = false }) { Text("Cancel") }
+                          }
                       }
                   )
+              }
+          }
+
+          @Composable
+          fun ChipRow(content: @Composable RowScope.() -> Unit) {
+              Row(
+                  modifier = Modifier
+                      .fillMaxWidth()
+                      .horizontalScroll(rememberScrollState())
+                      .padding(horizontal = 12.dp, vertical = 4.dp),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp),
+                  content = content
+              )
+          }
+
+          @Composable
+          fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
+              Box(
+                  Modifier
+                      .clip(RoundedCornerShape(50))
+                      .background(if (selected) Color(0xFF1565C0) else Color(0xFF2B2F36))
+                      .clickable { onClick() }
+                      .padding(horizontal = 14.dp, vertical = 8.dp)
+              ) {
+                  Text(label, fontSize = 13.sp, color = Color.White)
+              }
+          }
+
+          @Composable
+          fun FileRow(f: FileItem, checked: Boolean, loader: ImageLoader, onToggle: () -> Unit) {
+              val folder = (f.path ?: "").substringBeforeLast('/').removePrefix("/storage/emulated/0/")
+              Row(
+                  Modifier
+                      .fillMaxWidth()
+                      .clickable { onToggle() }
+                      .padding(horizontal = 12.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically
+              ) {
+                  Box(
+                      Modifier
+                          .size(56.dp)
+                          .clip(RoundedCornerShape(10.dp))
+                          .background(Color(0xFF2B2F36)),
+                      contentAlignment = Alignment.Center
+                  ) {
+                      if (f.isVisual) {
+                          AsyncImage(
+                              model = f.uri,
+                              imageLoader = loader,
+                              contentDescription = f.name,
+                              contentScale = ContentScale.Crop,
+                              modifier = Modifier.fillMaxSize()
+                          )
+                      } else {
+                          Text(f.ext.uppercase().take(4), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                      }
+                  }
+                  Spacer(Modifier.width(12.dp))
+                  Column(Modifier.weight(1f)) {
+                      Text(f.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
+                      Text(
+                          "${fmt(f.size)} \u00B7 ${dateText(f.date)}",
+                          fontSize = 12.sp,
+                          color = Color.Gray
+                      )
+                      Text(
+                          folder,
+                          maxLines = 1,
+                          overflow = TextOverflow.Ellipsis,
+                          fontSize = 11.sp,
+                          color = Color.Gray
+                      )
+                  }
+                  Checkbox(
+                      checked = checked,
+                      onCheckedChange = { onToggle() },
+                      colors = CheckboxDefaults.colors(checkedColor = Color(0xFFE53935))
+                  )
+              }
+          }
+
+          @Composable
+          fun LargeView(vm: MainVM, visible: List<FileItem>, loader: ImageLoader, onScan: () -> Unit) {
+              val st = vm.large
+              if (!st.scanned) {
+                  Column(
+                      Modifier.fillMaxSize().padding(24.dp),
+                      verticalArrangement = Arrangement.Center,
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Text(
+                          "Find the biggest files on your phone (videos, downloads, backups) and free space fast.",
+                          textAlign = TextAlign.Center
+                      )
+                      Spacer(Modifier.height(16.dp))
+                      Button(onClick = onScan) { Text("Scan") }
+                  }
+                  return
+              }
+              Column(Modifier.fillMaxSize()) {
+                  ChipRow {
+                      listOf(20, 50, 100, 500).forEach { mb ->
+                          Chip("$mb MB+", vm.minMb == mb) { vm.minMb = mb }
+                      }
+                  }
+                  Row(
+                      Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                      verticalAlignment = Alignment.CenterVertically
+                  ) {
+                      TextButton(onClick = { vm.selectAllIn(st, visible) }) { Text("Select all") }
+                      TextButton(onClick = { vm.clearSel(st) }) { Text("Clear") }
+                      Spacer(Modifier.weight(1f))
+                      TextButton(onClick = onScan) { Text("Rescan") }
+                  }
+                  if (visible.isEmpty()) {
+                      Text(
+                          "No files this large.",
+                          modifier = Modifier.padding(24.dp),
+                          color = Color.Gray
+                      )
+                  } else {
+                      LazyColumn(Modifier.fillMaxSize()) {
+                          items(visible, key = { it.key }) { f ->
+                              FileRow(
+                                  f = f,
+                                  checked = f.key in st.selected,
+                                  loader = loader,
+                                  onToggle = { vm.toggleIn(st, f.key) }
+                              )
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun WhatsAppView(
+              vm: MainVM,
+              base: List<FileItem>,
+              visible: List<FileItem>,
+              loader: ImageLoader,
+              onScan: () -> Unit
+          ) {
+              val st = vm.wa
+              if (!st.scanned) {
+                  Column(
+                      Modifier.fillMaxSize().padding(24.dp),
+                      verticalArrangement = Arrangement.Center,
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Text(
+                          "See how much space WhatsApp media takes (images, videos, voice notes, statuses) and clear the old stuff. Chat backups are never touched.",
+                          textAlign = TextAlign.Center
+                      )
+                      Spacer(Modifier.height(16.dp))
+                      Button(onClick = onScan) { Text("Scan WhatsApp") }
+                  }
+                  return
+              }
+              if (st.items.isEmpty()) {
+                  Column(
+                      Modifier.fillMaxSize().padding(24.dp),
+                      verticalArrangement = Arrangement.Center,
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Text("No WhatsApp media found on this phone.", textAlign = TextAlign.Center)
+                      Spacer(Modifier.height(16.dp))
+                      Button(onClick = onScan) { Text("Scan again") }
+                  }
+                  return
+              }
+              val cats = base
+                  .groupBy { it.category }
+                  .map { (name, list) -> name to list.sumOf { it.size } }
+                  .sortedByDescending { it.second }
+              Column(Modifier.fillMaxSize()) {
+                  ChipRow {
+                      Chip("All \u00B7 ${fmt(base.sumOf { it.size })}", vm.waCategory == "All") {
+                          vm.waCategory = "All"
+                      }
+                      cats.forEach { (name, bytes) ->
+                          Chip("$name \u00B7 ${fmt(bytes)}", vm.waCategory == name) {
+                              vm.waCategory = name
+                          }
+                      }
+                  }
+                  ChipRow {
+                      listOf("All", "Received", "Sent").forEach { s ->
+                          Chip(s, vm.waSide == s) { vm.waSide = s }
+                      }
+                  }
+                  ChipRow {
+                      Chip("Any age", vm.waAgeDays == 0) { vm.waAgeDays = 0 }
+                      listOf(30, 90, 365).forEach { d ->
+                          Chip("Older than $d days", vm.waAgeDays == d) { vm.waAgeDays = d }
+                      }
+                  }
+                  Row(
+                      Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                      verticalAlignment = Alignment.CenterVertically
+                  ) {
+                      TextButton(onClick = { vm.selectAllIn(st, visible) }) { Text("Select all") }
+                      TextButton(onClick = { vm.clearSel(st) }) { Text("Clear") }
+                      Spacer(Modifier.weight(1f))
+                      TextButton(onClick = onScan) { Text("Rescan") }
+                  }
+                  if (visible.isEmpty()) {
+                      Text(
+                          "Nothing matches these filters.",
+                          modifier = Modifier.padding(24.dp),
+                          color = Color.Gray
+                      )
+                  } else {
+                      LazyColumn(Modifier.fillMaxSize()) {
+                          items(visible, key = { it.key }) { f ->
+                              FileRow(
+                                  f = f,
+                                  checked = f.key in st.selected,
+                                  loader = loader,
+                                  onToggle = { vm.toggleIn(st, f.key) }
+                              )
+                          }
+                      }
+                  }
               }
           }
 
@@ -731,6 +1339,7 @@ jobs:
               }
           }
           __EOF__
+          base64 -d app/fixed.b64 > app/fixed.jks
 
       - uses: actions/setup-java@v4
         with:
