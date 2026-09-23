@@ -61,7 +61,7 @@ jobs:
                   minSdk = 30
                   targetSdk = 34
                   versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
-                  versionName = "1.1"
+                  versionName = "1.2"
               }
 
               signingConfigs {
@@ -106,7 +106,8 @@ jobs:
           __EOF__
           cat > app/src/main/AndroidManifest.xml <<'__EOF__'
           <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:tools="http://schemas.android.com/tools">
 
               <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
               <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
@@ -114,6 +115,10 @@ jobs:
                   android:name="android.permission.READ_EXTERNAL_STORAGE"
                   android:maxSdkVersion="32" />
               <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+              <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+                  tools:ignore="ProtectedPermissions" />
+              <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+                  tools:ignore="QueryAllPackagesPermission" />
 
               <application
                   android:allowBackup="false"
@@ -240,8 +245,12 @@ jobs:
               VIDEOS("Videos"),
               DOCS("Documents"),
               LARGE("Large files"),
-              WHATSAPP("WhatsApp")
+              WHATSAPP("WhatsApp"),
+              JUNK("Junk")
           }
+
+          // The five shown as swipeable tabs. JUNK is reached via the overflow menu instead.
+          val tabKinds = listOf(Kind.PHOTOS, Kind.VIDEOS, Kind.DOCS, Kind.LARGE, Kind.WHATSAPP)
 
           val visualExt = setOf(
               "jpg", "jpeg", "png", "webp", "gif", "bmp", "heic",
@@ -256,7 +265,8 @@ jobs:
               val date: Long,
               val kind: Kind,
               val category: String = "",
-              val sent: Boolean = false
+              val sent: Boolean = false,
+              val isDir: Boolean = false
           ) {
               val key: String = uri.toString()
               val ext: String = name.substringAfterLast('.', "").lowercase()
@@ -264,6 +274,12 @@ jobs:
           }
 
           data class DupGroup(val size: Long, val items: List<FileItem>)
+
+          data class AppCacheInfo(
+              val packageName: String,
+              val label: String,
+              val cacheBytes: Long
+          )
 
           object Scanner {
 
@@ -410,17 +426,107 @@ jobs:
                   return out.distinctBy { it.key }.sortedByDescending { it.size }
               }
 
+              private val thumbDirNames = setOf(".thumbnails", "thumbnails", "thumbcache", ".cache")
+
+              // A folder counts as "junk" only if nothing but junk lives under it, so we never
+              // suggest deleting a folder that also holds a file the user actually wants.
+              private fun isEmptyOfRealFiles(dir: File): Boolean {
+                  val kids = dir.listFiles() ?: return true
+                  for (k in kids) {
+                      if (k.isFile) return false
+                      if (k.isDirectory && !isEmptyOfRealFiles(k)) return false
+                  }
+                  return true
+              }
+
+              private fun dirSize(dir: File): Long =
+                  dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+
+              // Zero-byte files, stray .apk installers in Download, thumbnail/cache folders,
+              // and folders left empty after other cleanups. Never touches Android/data,
+              // Android/obb, our own recycle bin, or WhatsApp's chat backups.
+              fun listJunk(): List<FileItem> {
+                  val root = Environment.getExternalStorageDirectory()
+                  val downloadDir = File(root, "Download")
+                  val out = ArrayList<FileItem>()
+                  val thumbRoots = ArrayList<File>()
+
+                  root.walkTopDown()
+                      .onEnter { dir -> !dir.name.startsWith(".") && !skipForLarge(root, dir) }
+                      .forEach { f ->
+                          if (f.isDirectory && f.name.lowercase() in thumbDirNames) {
+                              thumbRoots.add(f)
+                              return@forEach
+                          }
+                          if (thumbRoots.any { f.absolutePath.startsWith(it.absolutePath + File.separator) }) {
+                              return@forEach
+                          }
+                          if (f.isFile) {
+                              if (f.length() == 0L) {
+                                  out.add(fileItem(f, Kind.JUNK).copy(category = "Zero-byte files"))
+                              } else if (
+                                  f.extension.lowercase() == "apk" &&
+                                  f.absolutePath.startsWith(downloadDir.absolutePath + File.separator)
+                              ) {
+                                  out.add(fileItem(f, Kind.JUNK).copy(category = "Leftover installers (.apk)"))
+                              }
+                          }
+                      }
+
+                  for (t in thumbRoots) {
+                      val size = dirSize(t)
+                      if (size > 0L) {
+                          out.add(
+                              FileItem(
+                                  uri = Uri.fromFile(t),
+                                  path = t.absolutePath,
+                                  name = t.name,
+                                  size = size,
+                                  date = t.lastModified() / 1000,
+                                  kind = Kind.JUNK,
+                                  category = "Thumbnail cache",
+                                  isDir = true
+                              )
+                          )
+                      }
+                  }
+
+                  root.walkTopDown()
+                      .onEnter { dir -> !dir.name.startsWith(".") && !skipForLarge(root, dir) && dir != root }
+                      .filter { it.isDirectory && it != root && isEmptyOfRealFiles(it) }
+                      .forEach {
+                          out.add(
+                              FileItem(
+                                  uri = Uri.fromFile(it),
+                                  path = it.absolutePath,
+                                  name = it.name,
+                                  size = 0L,
+                                  date = it.lastModified() / 1000,
+                                  kind = Kind.JUNK,
+                                  category = "Empty folders",
+                                  isDir = true
+                              )
+                          )
+                      }
+
+                  return out.sortedByDescending { it.size }
+              }
+
               fun deletePath(item: FileItem): Boolean {
                   val p = item.path ?: return false
                   return try {
-                      File(p).delete()
+                      val f = File(p)
+                      if (item.isDir || f.isDirectory) f.deleteRecursively() else f.delete()
                   } catch (e: Exception) {
                       false
                   }
               }
 
               // Files have no system trash, so "recycle bin" = a folder we move them into.
+              // Folders (thumbnail caches, empty folders) are junk by definition, so they are
+              // always removed outright rather than moved -- there is nothing worth restoring.
               fun moveToBin(item: FileItem): Boolean {
+                  if (item.isDir) return deletePath(item)
                   val p = item.path ?: return false
                   return try {
                       val src = File(p)
@@ -473,6 +579,32 @@ jobs:
                   }
               }
 
+              // Per-app cache sizes, biggest first. Android does not let a normal app clear
+              // another app's cache -- this only reads sizes so the user can pick where to look.
+              fun listAppCache(ctx: android.content.Context): List<AppCacheInfo> {
+                  val pm = ctx.packageManager
+                  val stats = ctx.getSystemService(android.app.usage.StorageStatsManager::class.java)
+                      ?: return emptyList()
+                  val out = ArrayList<AppCacheInfo>()
+                  for (appInfo in pm.getInstalledApplications(0)) {
+                      try {
+                          val s = stats.queryStatsForUid(appInfo.storageUuid, appInfo.uid)
+                          if (s.cacheBytes > 0L) {
+                              out.add(
+                                  AppCacheInfo(
+                                      packageName = appInfo.packageName,
+                                      label = pm.getApplicationLabel(appInfo).toString(),
+                                      cacheBytes = s.cacheBytes
+                                  )
+                              )
+                          }
+                      } catch (e: Exception) {
+                          // Some system UIDs refuse this query -- skip them.
+                      }
+                  }
+                  return out.distinctBy { it.packageName }.sortedByDescending { it.cacheBytes }
+              }
+
               // Step 1: same size. Step 2: same first 64 KB. Step 3: same full SHA-256.
               suspend fun findDuplicates(
                   cr: ContentResolver,
@@ -507,13 +639,17 @@ jobs:
 
           import android.Manifest
           import android.app.Activity
+          import android.app.AppOpsManager
           import android.content.ContentResolver
+          import android.content.Context
           import android.content.Intent
+          import android.content.pm.PackageManager
           import android.media.MediaScannerConnection
           import android.net.Uri
           import android.os.Build
           import android.os.Bundle
           import android.os.Environment
+          import android.os.Process
           import android.provider.MediaStore
           import android.provider.Settings
           import android.widget.Toast
@@ -547,12 +683,19 @@ jobs:
           import androidx.compose.foundation.lazy.grid.items
           import androidx.compose.foundation.rememberScrollState
           import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.ArrowBack
+          import androidx.compose.material.icons.filled.MoreVert
           import androidx.compose.material3.AlertDialog
           import androidx.compose.material3.Button
           import androidx.compose.material3.Checkbox
           import androidx.compose.material3.CheckboxDefaults
           import androidx.compose.material3.CircularProgressIndicator
+          import androidx.compose.material3.DropdownMenu
+          import androidx.compose.material3.DropdownMenuItem
           import androidx.compose.material3.ExperimentalMaterial3Api
+          import androidx.compose.material3.Icon
+          import androidx.compose.material3.IconButton
           import androidx.compose.material3.MaterialTheme
           import androidx.compose.material3.Scaffold
           import androidx.compose.material3.ScrollableTabRow
@@ -561,6 +704,7 @@ jobs:
           import androidx.compose.material3.TextButton
           import androidx.compose.material3.darkColorScheme
           import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.LaunchedEffect
           import androidx.compose.runtime.getValue
           import androidx.compose.runtime.mutableStateOf
           import androidx.compose.runtime.remember
@@ -604,10 +748,24 @@ jobs:
 
               val large = ListState()
               val wa = ListState()
+              val junk = ListState()
               var minMb by mutableStateOf(50)
               var waCategory by mutableStateOf("All")
               var waSide by mutableStateOf("All")
               var waAgeDays by mutableStateOf(0)
+              var junkCategory by mutableStateOf("All")
+
+              // null = normal tabs; otherwise one of "junk", "cache", "dashboard".
+              var overlay by mutableStateOf<String?>(null)
+              var menuOpen by mutableStateOf(false)
+
+              var cacheApps by mutableStateOf<List<AppCacheInfo>>(emptyList())
+              var cacheScanned by mutableStateOf(false)
+              var hasUsageAccess by mutableStateOf(false)
+
+              var freedBytes by mutableStateOf(0L)
+              var dashCounts by mutableStateOf<Map<String, Long>>(emptyMap())
+              var dashScanned by mutableStateOf(false)
 
               val groups: List<DupGroup> get() = results[kind] ?: emptyList()
               val scanned: Boolean get() = results.containsKey(kind)
@@ -634,6 +792,9 @@ jobs:
               val waVisible: List<FileItem>
                   get() = waBase.filter { waCategory == "All" || it.category == waCategory }
 
+              val junkVisible: List<FileItem>
+                  get() = junk.items.filter { junkCategory == "All" || it.category == junkCategory }
+
               fun scan(cr: ContentResolver) {
                   if (scanning) return
                   val k = kind
@@ -658,17 +819,25 @@ jobs:
                   }
               }
 
-              // Scan for the Large files or WhatsApp tab.
+              // Scan for the Large files, WhatsApp, or Junk screen.
               fun scanList(k: Kind) {
                   if (scanning) return
                   scanning = true
-                  progress = if (k == Kind.LARGE) "Looking for big files..." else "Reading WhatsApp media..."
+                  progress = when (k) {
+                      Kind.LARGE -> "Looking for big files..."
+                      Kind.WHATSAPP -> "Reading WhatsApp media..."
+                      else -> "Looking for junk..."
+                  }
                   viewModelScope.launch {
                       try {
                           val found = withContext(Dispatchers.IO) {
-                              if (k == Kind.LARGE) Scanner.listLarge(20L * 1024L * 1024L) else Scanner.listWhatsApp()
+                              when (k) {
+                                  Kind.LARGE -> Scanner.listLarge(20L * 1024L * 1024L)
+                                  Kind.WHATSAPP -> Scanner.listWhatsApp()
+                                  else -> Scanner.listJunk()
+                              }
                           }
-                          val st = if (k == Kind.LARGE) large else wa
+                          val st = when (k) { Kind.LARGE -> large; Kind.WHATSAPP -> wa; else -> junk }
                           st.items = found
                           st.selected = emptySet()
                           st.scanned = true
@@ -678,6 +847,60 @@ jobs:
                           scanning = false
                       }
                   }
+              }
+
+              fun loadCacheApps(ctx: Context) {
+                  if (scanning) return
+                  scanning = true
+                  progress = "Checking app cache sizes..."
+                  viewModelScope.launch {
+                      try {
+                          cacheApps = withContext(Dispatchers.IO) { Scanner.listAppCache(ctx) }
+                          cacheScanned = true
+                      } catch (e: Exception) {
+                          progress = "Scan failed: ${e.message}"
+                      } finally {
+                          scanning = false
+                      }
+                  }
+              }
+
+              fun loadDashboard(cr: ContentResolver) {
+                  if (scanning) return
+                  scanning = true
+                  progress = "Adding up your storage..."
+                  viewModelScope.launch {
+                      try {
+                          val counts = withContext(Dispatchers.IO) {
+                              val photos = Scanner.listMedia(cr, Kind.PHOTOS).sumOf { it.size }
+                              val videos = Scanner.listMedia(cr, Kind.VIDEOS).sumOf { it.size }
+                              val docs = Scanner.listDocs().sumOf { it.size }
+                              val wa = Scanner.listWhatsApp().sumOf { it.size }
+                              val junk = Scanner.listJunk().sumOf { it.size }
+                              mapOf(
+                                  "Photos" to photos, "Videos" to videos, "Documents" to docs,
+                                  "WhatsApp" to wa, "Junk" to junk
+                              )
+                          }
+                          dashCounts = counts
+                          dashScanned = true
+                      } catch (e: Exception) {
+                          progress = "Scan failed: ${e.message}"
+                      } finally {
+                          scanning = false
+                      }
+                  }
+              }
+
+              fun addFreed(bytes: Long, ctx: Context) {
+                  freedBytes += bytes
+                  ctx.getSharedPreferences("dupe_cleaner", Context.MODE_PRIVATE)
+                      .edit().putLong("freed_bytes", freedBytes).apply()
+              }
+
+              fun loadFreed(ctx: Context) {
+                  freedBytes = ctx.getSharedPreferences("dupe_cleaner", Context.MODE_PRIVATE)
+                      .getLong("freed_bytes", 0L)
               }
 
               fun toggle(key: String) {
@@ -732,6 +955,18 @@ jobs:
               java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
                   .format(java.util.Date(seconds * 1000))
 
+          // "Usage access" is the special permission Android requires before an app can read
+          // how much cache other apps are using. It can only be granted from Settings.
+          fun hasUsageAccess(ctx: Context): Boolean {
+              val ops = ctx.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+              val mode = ops.checkOpNoThrow(
+                  AppOpsManager.OPSTR_GET_USAGE_STATS,
+                  Process.myUid(),
+                  ctx.packageName
+              )
+              return mode == AppOpsManager.MODE_ALLOWED
+          }
+
           class MainActivity : ComponentActivity() {
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
@@ -748,30 +983,41 @@ jobs:
           @Composable
           fun App(vm: MainVM) {
               val ctx = LocalContext.current
-              val isDup = vm.kind == Kind.PHOTOS || vm.kind == Kind.VIDEOS || vm.kind == Kind.DOCS
+              val isDup = vm.overlay == null &&
+                  (vm.kind == Kind.PHOTOS || vm.kind == Kind.VIDEOS || vm.kind == Kind.DOCS)
               val groups = vm.groups
               val dupSelected = groups.flatMap { it.items }.filter { it.key in vm.selected }
               val largeVisible = vm.largeVisible
               val waBase = vm.waBase
               val waVisible = vm.waVisible
+              val junkVisible = vm.junkVisible
 
-              // What the Delete button will act on, for whichever tab is open.
-              val toDelete: List<FileItem> = when (vm.kind) {
-                  Kind.LARGE -> largeVisible.filter { it.key in vm.large.selected }
-                  Kind.WHATSAPP -> waVisible.filter { it.key in vm.wa.selected }
+              // What the Delete button will act on. Cache and Dashboard have no delete button.
+              val toDelete: List<FileItem> = when {
+                  vm.overlay == "junk" -> junkVisible.filter { it.key in vm.junk.selected }
+                  vm.overlay != null -> emptyList()
+                  vm.kind == Kind.LARGE -> largeVisible.filter { it.key in vm.large.selected }
+                  vm.kind == Kind.WHATSAPP -> waVisible.filter { it.key in vm.wa.selected }
                   else -> dupSelected
               }
-              val hasList: Boolean = when (vm.kind) {
-                  Kind.LARGE -> vm.large.scanned && largeVisible.isNotEmpty()
-                  Kind.WHATSAPP -> vm.wa.scanned && waVisible.isNotEmpty()
+              val hasList: Boolean = when {
+                  vm.overlay == "junk" -> vm.junk.scanned && junkVisible.isNotEmpty()
+                  vm.overlay != null -> false
+                  vm.kind == Kind.LARGE -> vm.large.scanned && largeVisible.isNotEmpty()
+                  vm.kind == Kind.WHATSAPP -> vm.wa.scanned && waVisible.isNotEmpty()
                   else -> vm.scanned && groups.isNotEmpty()
               }
-              val subtitle: String? = when (vm.kind) {
-                  Kind.LARGE ->
+              val subtitle: String? = when {
+                  vm.overlay == "junk" ->
+                      if (vm.junk.scanned && junkVisible.isNotEmpty()) {
+                          "${junkVisible.size} items \u00B7 ${fmt(junkVisible.sumOf { it.size })}"
+                      } else null
+                  vm.overlay != null -> null
+                  vm.kind == Kind.LARGE ->
                       if (vm.large.scanned && largeVisible.isNotEmpty()) {
                           "${largeVisible.size} files \u00B7 ${fmt(largeVisible.sumOf { it.size })}"
                       } else null
-                  Kind.WHATSAPP ->
+                  vm.kind == Kind.WHATSAPP ->
                       if (vm.wa.scanned && waVisible.isNotEmpty()) {
                           "${waVisible.size} files \u00B7 ${fmt(waVisible.sumOf { it.size })}"
                       } else null
@@ -780,8 +1026,16 @@ jobs:
                           "${groups.sumOf { it.items.size }} files \u00B7 ${fmt(groups.sumOf { it.size * it.items.size })}"
                       } else null
               }
-              val noun = if (isDup) "Duplicates" else "Files"
+              val noun = if (isDup) "Duplicates" else "Items"
               val verb = if (isDup) "Save" else "Free"
+
+              LaunchedEffect(Unit) {
+                  vm.loadFreed(ctx)
+                  vm.hasUsageAccess = hasUsageAccess(ctx)
+              }
+              LaunchedEffect(vm.overlay) {
+                  if (vm.overlay == "cache") vm.hasUsageAccess = hasUsageAccess(ctx)
+              }
 
               var confirm by remember { mutableStateOf(false) }
               val loader = remember {
@@ -794,6 +1048,7 @@ jobs:
                   if (r.resultCode == Activity.RESULT_OK) {
                       val n = vm.pending.size
                       val msg = if (vm.pendingTrash) "Moved $n files to Recycle Bin" else "Deleted $n files"
+                      if (!vm.pendingTrash) vm.addFreed(vm.pending.sumOf { it.size }, ctx)
                       vm.removeDeleted(vm.pending)
                       Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
                   }
@@ -810,7 +1065,9 @@ jobs:
               }
 
               fun runScan() {
-                  if (vm.kind == Kind.LARGE || vm.kind == Kind.WHATSAPP) {
+                  if (vm.overlay == "junk") {
+                      vm.scanList(Kind.JUNK)
+                  } else if (vm.kind == Kind.LARGE || vm.kind == Kind.WHATSAPP) {
                       vm.scanList(vm.kind)
                   } else {
                       vm.scan(ctx.contentResolver)
@@ -818,7 +1075,8 @@ jobs:
               }
 
               fun startScan() {
-                  val needsAllFiles = vm.kind == Kind.DOCS || vm.kind == Kind.LARGE || vm.kind == Kind.WHATSAPP
+                  val needsAllFiles = vm.overlay == "junk" ||
+                      vm.kind == Kind.DOCS || vm.kind == Kind.LARGE || vm.kind == Kind.WHATSAPP
                   if (needsAllFiles) {
                       if (Environment.isExternalStorageManager()) {
                           runScan()
@@ -851,7 +1109,7 @@ jobs:
               fun doDelete(permanent: Boolean) {
                   val items = toDelete
                   if (items.isEmpty()) return
-                  val viaMediaStore = vm.kind == Kind.PHOTOS || vm.kind == Kind.VIDEOS
+                  val viaMediaStore = vm.overlay == null && (vm.kind == Kind.PHOTOS || vm.kind == Kind.VIDEOS)
                   vm.pending = items
                   vm.pendingTrash = !permanent
                   if (viaMediaStore) {
@@ -870,30 +1128,79 @@ jobs:
                       vm.removeDeleted(done)
                       vm.removeFromList(vm.large, done)
                       vm.removeFromList(vm.wa, done)
+                      vm.removeFromList(vm.junk, done)
+                      if (permanent) vm.addFreed(done.sumOf { it.size }, ctx)
                       val failed = items.size - done.size
-                      val base = if (permanent) "Deleted ${done.size} files"
-                      else "Moved ${done.size} files to '${Scanner.BIN_NAME}' folder"
+                      val base = if (permanent) "Deleted ${done.size} items"
+                      else "Moved ${done.size} items to '${Scanner.BIN_NAME}' folder"
                       val msg = if (failed > 0) "$base ($failed failed)" else base
                       Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
                   }
               }
 
+              val overlayTitle = when (vm.overlay) {
+                  "junk" -> "Junk files"
+                  "cache" -> "App cache"
+                  "dashboard" -> "Storage dashboard"
+                  else -> null
+              }
+
               Scaffold(
                   topBar = {
                       Column {
-                          Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                              Text("Dupe Cleaner", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                              if (subtitle != null) {
-                                  Text(subtitle, fontSize = 13.sp, color = Color.Gray)
+                          Row(
+                              Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                              verticalAlignment = Alignment.CenterVertically
+                          ) {
+                              if (overlayTitle != null) {
+                                  IconButton(onClick = { vm.overlay = null }) {
+                                      Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                                  }
+                              }
+                              Column(Modifier.weight(1f)) {
+                                  Text(
+                                      overlayTitle ?: "Dupe Cleaner",
+                                      fontSize = 22.sp,
+                                      fontWeight = FontWeight.Bold
+                                  )
+                                  if (subtitle != null) {
+                                      Text(subtitle, fontSize = 13.sp, color = Color.Gray)
+                                  }
+                              }
+                              if (overlayTitle == null) {
+                                  Box {
+                                      IconButton(onClick = { vm.menuOpen = true }) {
+                                          Icon(Icons.Filled.MoreVert, contentDescription = "More")
+                                      }
+                                      DropdownMenu(
+                                          expanded = vm.menuOpen,
+                                          onDismissRequest = { vm.menuOpen = false }
+                                      ) {
+                                          DropdownMenuItem(
+                                              text = { Text("Junk files") },
+                                              onClick = { vm.menuOpen = false; vm.overlay = "junk" }
+                                          )
+                                          DropdownMenuItem(
+                                              text = { Text("App cache") },
+                                              onClick = { vm.menuOpen = false; vm.overlay = "cache" }
+                                          )
+                                          DropdownMenuItem(
+                                              text = { Text("Storage dashboard") },
+                                              onClick = { vm.menuOpen = false; vm.overlay = "dashboard" }
+                                          )
+                                      }
+                                  }
                               }
                           }
-                          ScrollableTabRow(selectedTabIndex = vm.kind.ordinal, edgePadding = 8.dp) {
-                              Kind.values().forEach { k ->
-                                  Tab(
-                                      selected = vm.kind == k,
-                                      onClick = { vm.kind = k },
-                                      text = { Text(k.label) }
-                                  )
+                          if (overlayTitle == null) {
+                              ScrollableTabRow(selectedTabIndex = vm.kind.ordinal, edgePadding = 8.dp) {
+                                  tabKinds.forEach { k ->
+                                      Tab(
+                                          selected = vm.kind == k,
+                                          onClick = { vm.kind = k },
+                                          text = { Text(k.label) }
+                                      )
+                                  }
                               }
                           }
                       }
@@ -931,6 +1238,15 @@ jobs:
                               Spacer(Modifier.height(16.dp))
                               Text(vm.progress)
                           }
+
+                          vm.overlay == "junk" ->
+                              JunkView(vm, junkVisible, loader) { startScan() }
+
+                          vm.overlay == "cache" ->
+                              CacheView(vm) { vm.loadCacheApps(ctx) }
+
+                          vm.overlay == "dashboard" ->
+                              DashboardView(vm) { vm.loadDashboard(ctx.contentResolver) }
 
                           vm.kind == Kind.LARGE ->
                               LargeView(vm, largeVisible, loader) { startScan() }
@@ -1032,8 +1348,13 @@ jobs:
                   } else {
                       ""
                   }
-                  val waNote = if (vm.kind == Kind.WHATSAPP) {
+                  val waNote = if (vm.overlay == null && vm.kind == Kind.WHATSAPP) {
                       "Deleted WhatsApp media will show as missing inside your chats.\n\n"
+                  } else {
+                      ""
+                  }
+                  val folderNote = if (toDelete.any { it.isDir }) {
+                      "Some selected items are folders \u2014 deleting one removes everything inside it, and folders always delete permanently (there is nothing to restore).\n\n"
                   } else {
                       ""
                   }
@@ -1042,7 +1363,7 @@ jobs:
                       title = { Text("Delete ${toDelete.size} files permanently?") },
                       text = {
                           Text(
-                              lostNote + waNote +
+                              lostNote + waNote + folderNote +
                                   "Yes = deleted forever.\nNo = moved to the Recycle Bin so you can restore them."
                           )
                       },
@@ -1103,7 +1424,9 @@ jobs:
                           .background(Color(0xFF2B2F36)),
                       contentAlignment = Alignment.Center
                   ) {
-                      if (f.isVisual) {
+                      if (f.isDir) {
+                          Text("\uD83D\uDCC1", fontSize = 20.sp)
+                      } else if (f.isVisual) {
                           AsyncImage(
                               model = f.uri,
                               imageLoader = loader,
@@ -1281,6 +1604,217 @@ jobs:
                               )
                           }
                       }
+                  }
+              }
+          }
+
+          @Composable
+          fun JunkView(vm: MainVM, visible: List<FileItem>, loader: ImageLoader, onScan: () -> Unit) {
+              val st = vm.junk
+              if (!st.scanned) {
+                  Column(
+                      Modifier.fillMaxSize().padding(24.dp),
+                      verticalArrangement = Arrangement.Center,
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Text(
+                          "Find zero-byte files, leftover .apk installers in Download, thumbnail caches, and folders left empty by other cleanups.",
+                          textAlign = TextAlign.Center
+                      )
+                      Spacer(Modifier.height(16.dp))
+                      Button(onClick = onScan) { Text("Scan") }
+                  }
+                  return
+              }
+              if (st.items.isEmpty()) {
+                  Column(
+                      Modifier.fillMaxSize().padding(24.dp),
+                      verticalArrangement = Arrangement.Center,
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Text("No junk found.", textAlign = TextAlign.Center)
+                      Spacer(Modifier.height(16.dp))
+                      Button(onClick = onScan) { Text("Scan again") }
+                  }
+                  return
+              }
+              val cats = st.items
+                  .groupBy { it.category }
+                  .map { (name, list) -> name to list.sumOf { it.size } }
+                  .sortedByDescending { it.second }
+              Column(Modifier.fillMaxSize()) {
+                  ChipRow {
+                      Chip("All \u00B7 ${fmt(st.items.sumOf { it.size })}", vm.junkCategory == "All") {
+                          vm.junkCategory = "All"
+                      }
+                      cats.forEach { (name, bytes) ->
+                          Chip("$name \u00B7 ${fmt(bytes)}", vm.junkCategory == name) {
+                              vm.junkCategory = name
+                          }
+                      }
+                  }
+                  Row(
+                      Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                      verticalAlignment = Alignment.CenterVertically
+                  ) {
+                      TextButton(onClick = { vm.selectAllIn(st, visible) }) { Text("Select all") }
+                      TextButton(onClick = { vm.clearSel(st) }) { Text("Clear") }
+                      Spacer(Modifier.weight(1f))
+                      TextButton(onClick = onScan) { Text("Rescan") }
+                  }
+                  LazyColumn(Modifier.fillMaxSize()) {
+                      items(visible, key = { it.key }) { f ->
+                          FileRow(
+                              f = f,
+                              checked = f.key in st.selected,
+                              loader = loader,
+                              onToggle = { vm.toggleIn(st, f.key) }
+                          )
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun CacheView(vm: MainVM, onScan: () -> Unit) {
+              val ctx = LocalContext.current
+              if (!vm.hasUsageAccess) {
+                  Column(
+                      Modifier.fillMaxSize().padding(24.dp),
+                      verticalArrangement = Arrangement.Center,
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Text(
+                          "Android only lets an app clear its OWN cache, not other apps'. " +
+                              "What this screen can do is show which apps are holding the most cache, " +
+                              "so you can clear each one in two taps from its own Settings page.",
+                          textAlign = TextAlign.Center
+                      )
+                      Spacer(Modifier.height(16.dp))
+                      Text(
+                          "That needs one extra permission first: \"Usage access\".",
+                          textAlign = TextAlign.Center,
+                          fontSize = 13.sp,
+                          color = Color.Gray
+                      )
+                      Spacer(Modifier.height(16.dp))
+                      Button(onClick = {
+                          ctx.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                      }) { Text("Grant usage access") }
+                  }
+                  return
+              }
+              if (!vm.cacheScanned) {
+                  Column(
+                      Modifier.fillMaxSize().padding(24.dp),
+                      verticalArrangement = Arrangement.Center,
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Text("List every app's cache size, biggest first.", textAlign = TextAlign.Center)
+                      Spacer(Modifier.height(16.dp))
+                      Button(onClick = onScan) { Text("Check app cache") }
+                  }
+                  return
+              }
+              Column(Modifier.fillMaxSize()) {
+                  Row(
+                      Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                      verticalAlignment = Alignment.CenterVertically
+                  ) {
+                      Text(
+                          "Total cache: ${fmt(vm.cacheApps.sumOf { it.cacheBytes })}",
+                          fontSize = 13.sp,
+                          color = Color.Gray,
+                          modifier = Modifier.weight(1f)
+                      )
+                      TextButton(onClick = onScan) { Text("Rescan") }
+                  }
+                  if (vm.cacheApps.isEmpty()) {
+                      Text(
+                          "No app cache found.",
+                          modifier = Modifier.padding(24.dp),
+                          color = Color.Gray
+                      )
+                  } else {
+                      LazyColumn(Modifier.fillMaxSize()) {
+                          items(vm.cacheApps, key = { it.packageName }) { app ->
+                              Row(
+                                  Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                                  verticalAlignment = Alignment.CenterVertically
+                              ) {
+                                  Column(Modifier.weight(1f)) {
+                                      Text(app.label, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                      Text(fmt(app.cacheBytes), fontSize = 12.sp, color = Color.Gray)
+                                  }
+                                  TextButton(onClick = {
+                                      ctx.startActivity(
+                                          Intent(
+                                              Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                              Uri.parse("package:" + app.packageName)
+                                          )
+                                      )
+                                  }) { Text("Clear") }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun DashboardView(vm: MainVM, onScan: () -> Unit) {
+              Column(Modifier.fillMaxSize().padding(20.dp)) {
+                  Text(
+                      "Total freed with this app: ${fmt(vm.freedBytes)}",
+                      fontSize = 15.sp,
+                      fontWeight = FontWeight.Bold
+                  )
+                  Spacer(Modifier.height(20.dp))
+                  if (!vm.dashScanned) {
+                      Column(
+                          Modifier.fillMaxWidth(),
+                          horizontalAlignment = Alignment.CenterHorizontally
+                      ) {
+                          Text(
+                              "See how your storage breaks down across Photos, Videos, Documents, WhatsApp, and Junk.",
+                              textAlign = TextAlign.Center
+                          )
+                          Spacer(Modifier.height(16.dp))
+                          Button(onClick = onScan) { Text("Scan storage") }
+                      }
+                  } else {
+                      val total = vm.dashCounts.values.sum().coerceAtLeast(1L)
+                      val colors = listOf(
+                          Color(0xFF1565C0), Color(0xFF2E7D32), Color(0xFFF9A825),
+                          Color(0xFF6A1B9A), Color(0xFFC62828)
+                      )
+                      val entries = vm.dashCounts.entries.sortedByDescending { it.value }
+                      entries.forEachIndexed { i, (label, bytes) ->
+                          val frac = bytes.toFloat() / total.toFloat()
+                          Column(Modifier.padding(bottom = 14.dp)) {
+                              Row(Modifier.fillMaxWidth()) {
+                                  Text(label, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                                  Text(fmt(bytes), fontSize = 13.sp, color = Color.Gray)
+                              }
+                              Spacer(Modifier.height(4.dp))
+                              Box(
+                                  Modifier
+                                      .fillMaxWidth()
+                                      .height(10.dp)
+                                      .clip(RoundedCornerShape(6.dp))
+                                      .background(Color(0xFF2B2F36))
+                              ) {
+                                  Box(
+                                      Modifier
+                                          .fillMaxWidth(frac.coerceIn(0f, 1f))
+                                          .fillMaxHeight()
+                                          .clip(RoundedCornerShape(6.dp))
+                                          .background(colors[i % colors.size])
+                                  )
+                              }
+                          }
+                      }
+                      TextButton(onClick = onScan) { Text("Rescan") }
                   }
               }
           }
