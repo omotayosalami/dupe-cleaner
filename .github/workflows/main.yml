@@ -111,6 +111,7 @@ jobs:
 
               <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
               <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+              <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
               <uses-permission
                   android:name="android.permission.READ_EXTERNAL_STORAGE"
                   android:maxSdkVersion="32" />
@@ -243,14 +244,15 @@ jobs:
           enum class Kind(val label: String) {
               PHOTOS("Photos"),
               VIDEOS("Videos"),
+              MUSIC("Music"),
               DOCS("Documents"),
               LARGE("Large files"),
               WHATSAPP("WhatsApp"),
               JUNK("Junk")
           }
 
-          // The five shown as swipeable tabs. JUNK is reached via the overflow menu instead.
-          val tabKinds = listOf(Kind.PHOTOS, Kind.VIDEOS, Kind.DOCS, Kind.LARGE, Kind.WHATSAPP)
+          // The six shown as swipeable tabs. JUNK is reached via the overflow menu instead.
+          val tabKinds = listOf(Kind.PHOTOS, Kind.VIDEOS, Kind.MUSIC, Kind.DOCS, Kind.LARGE, Kind.WHATSAPP)
 
           val visualExt = setOf(
               "jpg", "jpeg", "png", "webp", "gif", "bmp", "heic",
@@ -275,11 +277,15 @@ jobs:
 
           data class DupGroup(val size: Long, val items: List<FileItem>)
 
-          data class AppCacheInfo(
+          data class AppStorageInfo(
               val packageName: String,
               val label: String,
+              val appBytes: Long,
+              val dataBytes: Long,
               val cacheBytes: Long
-          )
+          ) {
+              val totalBytes: Long get() = appBytes + dataBytes + cacheBytes
+          }
 
           object Scanner {
 
@@ -308,10 +314,10 @@ jobs:
               )
 
               fun listMedia(cr: ContentResolver, kind: Kind): List<FileItem> {
-                  val base: Uri = if (kind == Kind.PHOTOS) {
-                      MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                  } else {
-                      MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                  val base: Uri = when (kind) {
+                      Kind.PHOTOS -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                      Kind.MUSIC -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                      else -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
                   }
                   val proj = arrayOf(
                       MediaStore.MediaColumns._ID,
@@ -579,21 +585,28 @@ jobs:
                   }
               }
 
-              // Per-app cache sizes, biggest first. Android does not let a normal app clear
-              // another app's cache -- this only reads sizes so the user can pick where to look.
-              fun listAppCache(ctx: android.content.Context): List<AppCacheInfo> {
+              // Per-app storage, biggest first: app (APK/install size), data (files the app has
+              // saved -- downloads, databases, offline media) and cache (temp files), each
+              // reported separately via StorageStatsManager so this works without needing
+              // access to another app's private folders, which Android blocks outright.
+              // Android does not let a normal app clear another app's storage -- this only
+              // reads sizes so the user can jump straight to the right app's Settings page.
+              fun listAppStorage(ctx: android.content.Context): List<AppStorageInfo> {
                   val pm = ctx.packageManager
                   val stats = ctx.getSystemService(android.app.usage.StorageStatsManager::class.java)
                       ?: return emptyList()
-                  val out = ArrayList<AppCacheInfo>()
+                  val out = ArrayList<AppStorageInfo>()
                   for (appInfo in pm.getInstalledApplications(0)) {
                       try {
                           val s = stats.queryStatsForUid(appInfo.storageUuid, appInfo.uid)
-                          if (s.cacheBytes > 0L) {
+                          val total = s.appBytes + s.dataBytes + s.cacheBytes
+                          if (total > 0L) {
                               out.add(
-                                  AppCacheInfo(
+                                  AppStorageInfo(
                                       packageName = appInfo.packageName,
                                       label = pm.getApplicationLabel(appInfo).toString(),
+                                      appBytes = s.appBytes,
+                                      dataBytes = s.dataBytes,
                                       cacheBytes = s.cacheBytes
                                   )
                               )
@@ -602,7 +615,7 @@ jobs:
                           // Some system UIDs refuse this query -- skip them.
                       }
                   }
-                  return out.distinctBy { it.packageName }.sortedByDescending { it.cacheBytes }
+                  return out.distinctBy { it.packageName }.sortedByDescending { it.totalBytes }
               }
 
               // Step 1: same size. Step 2: same first 64 KB. Step 3: same full SHA-256.
@@ -760,7 +773,7 @@ jobs:
               var overlay by mutableStateOf<String?>(null)
               var menuOpen by mutableStateOf(false)
 
-              var cacheApps by mutableStateOf<List<AppCacheInfo>>(emptyList())
+              var cacheApps by mutableStateOf<List<AppStorageInfo>>(emptyList())
               var cacheScanned by mutableStateOf(false)
               var hasUsageAccess by mutableStateOf(false)
 
@@ -853,10 +866,10 @@ jobs:
               fun loadCacheApps(ctx: Context) {
                   if (scanning) return
                   scanning = true
-                  progress = "Checking app cache sizes..."
+                  progress = "Checking app storage..."
                   viewModelScope.launch {
                       try {
-                          cacheApps = withContext(Dispatchers.IO) { Scanner.listAppCache(ctx) }
+                          cacheApps = withContext(Dispatchers.IO) { Scanner.listAppStorage(ctx) }
                           cacheScanned = true
                       } catch (e: Exception) {
                           progress = "Scan failed: ${e.message}"
@@ -875,12 +888,13 @@ jobs:
                           val counts = withContext(Dispatchers.IO) {
                               val photos = Scanner.listMedia(cr, Kind.PHOTOS).sumOf { it.size }
                               val videos = Scanner.listMedia(cr, Kind.VIDEOS).sumOf { it.size }
+                              val music = Scanner.listMedia(cr, Kind.MUSIC).sumOf { it.size }
                               val docs = Scanner.listDocs().sumOf { it.size }
                               val wa = Scanner.listWhatsApp().sumOf { it.size }
                               val junk = Scanner.listJunk().sumOf { it.size }
                               mapOf(
-                                  "Photos" to photos, "Videos" to videos, "Documents" to docs,
-                                  "WhatsApp" to wa, "Junk" to junk
+                                  "Photos" to photos, "Videos" to videos, "Music" to music,
+                                  "Documents" to docs, "WhatsApp" to wa, "Junk" to junk
                               )
                           }
                           dashCounts = counts
@@ -985,7 +999,7 @@ jobs:
           fun App(vm: MainVM) {
               val ctx = LocalContext.current
               val isDup = vm.overlay == null &&
-                  (vm.kind == Kind.PHOTOS || vm.kind == Kind.VIDEOS || vm.kind == Kind.DOCS)
+                  (vm.kind == Kind.PHOTOS || vm.kind == Kind.VIDEOS || vm.kind == Kind.MUSIC || vm.kind == Kind.DOCS)
               val groups = vm.groups
               val dupSelected = groups.flatMap { it.items }.filter { it.key in vm.selected }
               val largeVisible = vm.largeVisible
@@ -1098,7 +1112,8 @@ jobs:
                       val perms = if (Build.VERSION.SDK_INT >= 33) {
                           arrayOf(
                               Manifest.permission.READ_MEDIA_IMAGES,
-                              Manifest.permission.READ_MEDIA_VIDEO
+                              Manifest.permission.READ_MEDIA_VIDEO,
+                              Manifest.permission.READ_MEDIA_AUDIO
                           )
                       } else {
                           arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
@@ -1141,7 +1156,7 @@ jobs:
 
               val overlayTitle = when (vm.overlay) {
                   "junk" -> "Junk files"
-                  "cache" -> "App cache"
+                  "cache" -> "App storage"
                   "dashboard" -> "Storage dashboard"
                   else -> null
               }
@@ -1182,7 +1197,7 @@ jobs:
                                               onClick = { vm.menuOpen = false; vm.overlay = "junk" }
                                           )
                                           DropdownMenuItem(
-                                              text = { Text("App cache") },
+                                              text = { Text("App storage") },
                                               onClick = { vm.menuOpen = false; vm.overlay = "cache" }
                                           )
                                           DropdownMenuItem(
@@ -1686,9 +1701,10 @@ jobs:
                       horizontalAlignment = Alignment.CenterHorizontally
                   ) {
                       Text(
-                          "Android only lets an app clear its OWN cache, not other apps'. " +
-                              "What this screen can do is show which apps are holding the most cache, " +
-                              "so you can clear each one in two taps from its own Settings page.",
+                          "See a full per-app storage breakdown \u2014 app size, saved data, and cache \u2014 " +
+                              "just like Settings > Apps, without leaving Dupe Cleaner. Android still only " +
+                              "lets an app manage its OWN storage, so clearing happens on each app's own " +
+                              "Settings page, one tap away from here.",
                           textAlign = TextAlign.Center
                       )
                       Spacer(Modifier.height(16.dp))
@@ -1711,9 +1727,12 @@ jobs:
                       verticalArrangement = Arrangement.Center,
                       horizontalAlignment = Alignment.CenterHorizontally
                   ) {
-                      Text("List every app's cache size, biggest first.", textAlign = TextAlign.Center)
+                      Text(
+                          "List every app's total storage \u2014 app, data, and cache \u2014 biggest first.",
+                          textAlign = TextAlign.Center
+                      )
                       Spacer(Modifier.height(16.dp))
-                      Button(onClick = onScan) { Text("Check app cache") }
+                      Button(onClick = onScan) { Text("Check app storage") }
                   }
                   return
               }
@@ -1723,7 +1742,7 @@ jobs:
                       verticalAlignment = Alignment.CenterVertically
                   ) {
                       Text(
-                          "Total cache: ${fmt(vm.cacheApps.sumOf { it.cacheBytes })}",
+                          "Total: ${fmt(vm.cacheApps.sumOf { it.totalBytes })} across ${vm.cacheApps.size} apps",
                           fontSize = 13.sp,
                           color = Color.Gray,
                           modifier = Modifier.weight(1f)
@@ -1732,29 +1751,46 @@ jobs:
                   }
                   if (vm.cacheApps.isEmpty()) {
                       Text(
-                          "No app cache found.",
+                          "No app storage found.",
                           modifier = Modifier.padding(24.dp),
                           color = Color.Gray
                       )
                   } else {
                       LazyColumn(Modifier.fillMaxSize()) {
                           items(vm.cacheApps, key = { it.packageName }) { app ->
-                              Row(
-                                  Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                                  verticalAlignment = Alignment.CenterVertically
+                              Column(
+                                  Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
                               ) {
-                                  Column(Modifier.weight(1f)) {
-                                      Text(app.label, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                      Text(fmt(app.cacheBytes), fontSize = 12.sp, color = Color.Gray)
-                                  }
-                                  TextButton(onClick = {
-                                      ctx.startActivity(
-                                          Intent(
-                                              Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                              Uri.parse("package:" + app.packageName)
+                                  Row(verticalAlignment = Alignment.CenterVertically) {
+                                      Column(Modifier.weight(1f)) {
+                                          Text(
+                                              app.label,
+                                              fontSize = 14.sp,
+                                              maxLines = 1,
+                                              overflow = TextOverflow.Ellipsis
                                           )
-                                      )
-                                  }) { Text("Clear") }
+                                          Text(
+                                              fmt(app.totalBytes),
+                                              fontSize = 13.sp,
+                                              fontWeight = FontWeight.Bold,
+                                              color = Color.Gray
+                                          )
+                                      }
+                                      TextButton(onClick = {
+                                          ctx.startActivity(
+                                              Intent(
+                                                  Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                                  Uri.parse("package:" + app.packageName)
+                                              )
+                                          )
+                                      }) { Text("Manage") }
+                                  }
+                                  Spacer(Modifier.height(2.dp))
+                                  Text(
+                                      "App ${fmt(app.appBytes)} \u00B7 Data ${fmt(app.dataBytes)} \u00B7 Cache ${fmt(app.cacheBytes)}",
+                                      fontSize = 11.sp,
+                                      color = Color.Gray
+                                  )
                               }
                           }
                       }
@@ -1787,7 +1823,7 @@ jobs:
                       val total = vm.dashCounts.values.sum().coerceAtLeast(1L)
                       val colors = listOf(
                           Color(0xFF1565C0), Color(0xFF2E7D32), Color(0xFFF9A825),
-                          Color(0xFF6A1B9A), Color(0xFFC62828)
+                          Color(0xFF6A1B9A), Color(0xFFC62828), Color(0xFF00838F)
                       )
                       val entries = vm.dashCounts.entries.sortedByDescending { it.value }
                       entries.forEachIndexed { i, (label, bytes) ->
@@ -1829,74 +1865,8 @@ jobs:
                       .background(Color(0xFF2B2F36))
                       .clickable { onToggle() }
               ) {
-                  if (f.kind == Kind.DOCS) {
+                  if (f.kind == Kind.DOCS || f.kind == Kind.MUSIC) {
                       Column(
                           Modifier.fillMaxSize().padding(8.dp),
                           verticalArrangement = Arrangement.Center,
-                          horizontalAlignment = Alignment.CenterHorizontally
-                      ) {
-                          Text(
-                              f.name.substringAfterLast('.', "").uppercase(),
-                              fontSize = 28.sp,
-                              fontWeight = FontWeight.Bold
-                          )
-                      }
-                  } else {
-                      AsyncImage(
-                          model = f.uri,
-                          imageLoader = loader,
-                          contentDescription = f.name,
-                          contentScale = ContentScale.Crop,
-                          modifier = Modifier.fillMaxSize()
-                      )
-                  }
-                  if (checked) {
-                      Box(Modifier.fillMaxSize().background(Color(0x33FF3B30)))
-                  }
-                  Text(
-                      f.name,
-                      fontSize = 10.sp,
-                      maxLines = 1,
-                      overflow = TextOverflow.Ellipsis,
-                      color = Color.White,
-                      modifier = Modifier
-                          .align(Alignment.BottomStart)
-                          .padding(start = 8.dp, bottom = 14.dp)
-                          .width(90.dp)
-                          .background(Color(0x99000000))
-                  )
-                  Checkbox(
-                      checked = checked,
-                      onCheckedChange = { onToggle() },
-                      colors = CheckboxDefaults.colors(checkedColor = Color(0xFFE53935)),
-                      modifier = Modifier.align(Alignment.BottomEnd)
-                  )
-              }
-          }
-          __EOF__
-          base64 -d app/fixed.b64 > app/fixed.jks
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 8.7
-
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
-
-      - name: Keep APK as build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: DupeCleaner-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-
-      - name: Publish APK to Releases
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: apk-build
-          name: Dupe Cleaner APK
-          files: app/build/outputs/apk/debug/app-debug.apk
+                         
