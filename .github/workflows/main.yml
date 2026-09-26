@@ -282,7 +282,12 @@ jobs:
               val label: String,
               val appBytes: Long,
               val dataBytes: Long,
-              val cacheBytes: Long
+              val cacheBytes: Long,
+              val isSystemApp: Boolean,
+              // Days since Android last recorded this app in the foreground.
+              // Null means no usage was recorded in the lookback window (long-dormant,
+              // or a background-only component that never shows in usage stats).
+              val lastUsedDays: Int?
           ) {
               val totalBytes: Long get() = appBytes + dataBytes + cacheBytes
           }
@@ -595,19 +600,39 @@ jobs:
                   val pm = ctx.packageManager
                   val stats = ctx.getSystemService(android.app.usage.StorageStatsManager::class.java)
                       ?: return emptyList()
+                  val usm = ctx.getSystemService(android.app.usage.UsageStatsManager::class.java)
+                  val now = System.currentTimeMillis()
+                  // Look back ~2 years so even long-dormant apps still surface a real date.
+                  val lastUsed: Map<String, Long> = try {
+                      usm?.queryUsageStats(
+                          android.app.usage.UsageStatsManager.INTERVAL_BEST,
+                          now - 730L * 24 * 60 * 60 * 1000,
+                          now
+                      )?.associate { it.packageName to it.lastTimeUsed } ?: emptyMap()
+                  } catch (e: Exception) {
+                      emptyMap()
+                  }
                   val out = ArrayList<AppStorageInfo>()
                   for (appInfo in pm.getInstalledApplications(0)) {
                       try {
                           val s = stats.queryStatsForUid(appInfo.storageUuid, appInfo.uid)
                           val total = s.appBytes + s.dataBytes + s.cacheBytes
                           if (total > 0L) {
+                              val used = lastUsed[appInfo.packageName]
+                              val days = if (used != null && used > 0L) {
+                                  ((now - used) / 86_400_000L).toInt()
+                              } else {
+                                  null
+                              }
                               out.add(
                                   AppStorageInfo(
                                       packageName = appInfo.packageName,
                                       label = pm.getApplicationLabel(appInfo).toString(),
                                       appBytes = s.appBytes,
                                       dataBytes = s.dataBytes,
-                                      cacheBytes = s.cacheBytes
+                                      cacheBytes = s.cacheBytes,
+                                      isSystemApp = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0,
+                                      lastUsedDays = days
                                   )
                               )
                           }
@@ -776,6 +801,7 @@ jobs:
               var cacheApps by mutableStateOf<List<AppStorageInfo>>(emptyList())
               var cacheScanned by mutableStateOf(false)
               var hasUsageAccess by mutableStateOf(false)
+              var cacheFilter by mutableStateOf("All")
 
               var freedBytes by mutableStateOf(0L)
               var dashCounts by mutableStateOf<Map<String, Long>>(emptyMap())
@@ -783,6 +809,13 @@ jobs:
 
               val groups: List<DupGroup> get() = results[kind] ?: emptyList()
               val scanned: Boolean get() = results.containsKey(kind)
+
+              val cacheVisible: List<AppStorageInfo>
+                  get() = when (cacheFilter) {
+                      "Unused 30+" -> cacheApps.filter { (it.lastUsedDays ?: Int.MAX_VALUE) >= 30 }
+                      "Unused 90+" -> cacheApps.filter { (it.lastUsedDays ?: Int.MAX_VALUE) >= 90 }
+                      else -> cacheApps
+                  }
 
               val largeVisible: List<FileItem>
                   get() {
@@ -1737,7 +1770,8 @@ jobs:
                       horizontalAlignment = Alignment.CenterHorizontally
                   ) {
                       Text(
-                          "List every app's total storage \u2014 app, data, and cache \u2014 biggest first.",
+                          "List every app's total storage \u2014 app, data, and cache \u2014 biggest first, " +
+                              "with when you last opened each one so it's easier to tell what's worth keeping.",
                           textAlign = TextAlign.Center
                       )
                       Spacer(Modifier.height(16.dp))
@@ -1745,46 +1779,71 @@ jobs:
                   }
                   return
               }
+              val visible = vm.cacheVisible
               Column(Modifier.fillMaxSize()) {
+                  ChipRow {
+                      Chip("All \u00B7 ${vm.cacheApps.size}", vm.cacheFilter == "All") {
+                          vm.cacheFilter = "All"
+                      }
+                      Chip("Unused 30d+", vm.cacheFilter == "Unused 30+") {
+                          vm.cacheFilter = "Unused 30+"
+                      }
+                      Chip("Unused 90d+", vm.cacheFilter == "Unused 90+") {
+                          vm.cacheFilter = "Unused 90+"
+                      }
+                  }
                   Row(
                       Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                       verticalAlignment = Alignment.CenterVertically
                   ) {
                       Text(
-                          "Total: ${fmt(vm.cacheApps.sumOf { it.totalBytes })} across ${vm.cacheApps.size} apps",
+                          "Showing: ${fmt(visible.sumOf { it.totalBytes })} across ${visible.size} apps",
                           fontSize = 13.sp,
                           color = Color.Gray,
                           modifier = Modifier.weight(1f)
                       )
                       TextButton(onClick = onScan) { Text("Rescan") }
                   }
-                  if (vm.cacheApps.isEmpty()) {
+                  if (visible.isEmpty()) {
                       Text(
-                          "No app storage found.",
+                          "Nothing matches this filter.",
                           modifier = Modifier.padding(24.dp),
                           color = Color.Gray
                       )
                   } else {
                       LazyColumn(Modifier.fillMaxSize()) {
-                          items(vm.cacheApps, key = { it.packageName }) { app ->
+                          items(visible, key = { it.packageName }) { app ->
                               Column(
                                   Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
                               ) {
-                                  Row(verticalAlignment = Alignment.CenterVertically) {
-                                      Column(Modifier.weight(1f)) {
-                                          Text(
-                                              app.label,
-                                              fontSize = 14.sp,
-                                              maxLines = 1,
-                                              overflow = TextOverflow.Ellipsis
-                                          )
-                                          Text(
-                                              fmt(app.totalBytes),
-                                              fontSize = 13.sp,
-                                              fontWeight = FontWeight.Bold,
-                                              color = Color.Gray
-                                          )
-                                      }
+                                  Text(
+                                      app.label,
+                                      fontSize = 14.sp,
+                                      maxLines = 1,
+                                      overflow = TextOverflow.Ellipsis
+                                  )
+                                  Text(
+                                      fmt(app.totalBytes),
+                                      fontSize = 13.sp,
+                                      fontWeight = FontWeight.Bold,
+                                      color = Color.Gray
+                                  )
+                                  Text(
+                                      "App ${fmt(app.appBytes)} \u00B7 Data ${fmt(app.dataBytes)} \u00B7 Cache ${fmt(app.cacheBytes)}",
+                                      fontSize = 11.sp,
+                                      color = Color.Gray
+                                  )
+                                  Text(
+                                      when {
+                                          app.lastUsedDays == null -> "No recent usage recorded"
+                                          app.lastUsedDays <= 0 -> "Used today"
+                                          else -> "Last opened ${app.lastUsedDays} day(s) ago"
+                                      },
+                                      fontSize = 11.sp,
+                                      color = Color.Gray
+                                  )
+                                  Spacer(Modifier.height(6.dp))
+                                  Row {
                                       TextButton(onClick = {
                                           ctx.startActivity(
                                               Intent(
@@ -1793,13 +1852,19 @@ jobs:
                                               )
                                           )
                                       }) { Text("Manage") }
+                                      // Uninstalling a system app is blocked by Android anyway,
+                                      // so the button is only offered for apps you actually installed.
+                                      if (!app.isSystemApp) {
+                                          TextButton(onClick = {
+                                              ctx.startActivity(
+                                                  Intent(
+                                                      Intent.ACTION_DELETE,
+                                                      Uri.parse("package:" + app.packageName)
+                                                  )
+                                              )
+                                          }) { Text("Uninstall") }
+                                      }
                                   }
-                                  Spacer(Modifier.height(2.dp))
-                                  Text(
-                                      "App ${fmt(app.appBytes)} \u00B7 Data ${fmt(app.dataBytes)} \u00B7 Cache ${fmt(app.cacheBytes)}",
-                                      fontSize = 11.sp,
-                                      color = Color.Gray
-                                  )
                               }
                           }
                       }
